@@ -1,6 +1,9 @@
 {
   "name": "auto-rekini-shopify",
   "version": "1.0.0",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "start": "node api/webhook.js"
   },
