@@ -2,14 +2,13 @@
   "name": "auto-rekini-shopify",
   "version": "1.0.0",
   "engines": {
-    "node": "18.x"
+    "node": "24.x"
   },
   "scripts": {
     "start": "node api/webhook.js"
   },
   "dependencies": {
-    "@sparticuz/chromium": "119.0.2",
     "nodemailer": "^6.9.4",
-    "puppeteer-core": "21.5.0"
+    "puppeteer-core": "22.6.0"
   }
 }
