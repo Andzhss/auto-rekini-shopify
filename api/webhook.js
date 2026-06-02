@@ -78,34 +78,57 @@ export default async function handler(req, res) {
 
     const order = JSON.parse(bodyString);
     
+    // Rēķina numura labojums
+    const orderNumber = order.name || order.order_number || "TEST";
+
+    // 1. Gudrāka izglītības produktu (bez PVN) pārbaude
     let isEducationProduct = false;
+    let calculatedTotal = 0;
+
     order.line_items.forEach(item => {
-      if (item.handle === 'vienreizeja-nodarbibu-samaksa-tehnologiju-nodarbibas-bratus' || item.handle === 'vasaras-nometne-2026') {
+      const title = (item.title || item.name || '').toLowerCase();
+      const handle = (item.handle || '').toLowerCase();
+      
+      // Pārbaudām nosaukumus un kodus, lai garantētu PVN noņemšanu
+      if (
+        handle.includes('vienreizeja') || 
+        handle.includes('vasaras-nometne') ||
+        title.includes('tehnoloģiju nodarbības') ||
+        title.includes('tehnologiju nodarbibas') ||
+        title.includes('vasaras nometne') ||
+        title.includes('vienreizēja')
+      ) {
         isEducationProduct = true;
       }
+      
+      // Paši saskaitām summas, ja Shopify testa webhook atstāj nulles
+      calculatedTotal += parseFloat(item.price || 0) * parseInt(item.quantity || 1);
     });
 
-    const totalPrice = parseFloat(order.total_price);
-    const cents = order.total_price_set.shop_money.amount.split('.')[1] || "00";
+    // 2. Kopējo summu un PVN kalkulācija
+    const totalPrice = (order.total_price && parseFloat(order.total_price) > 0) ? parseFloat(order.total_price) : calculatedTotal;
+    const cents = Math.round((totalPrice % 1) * 100).toString().padStart(2, '0');
     const wordsEuros = euroToWords(Math.round(totalPrice * 100));
 
     let subtotalHtml = "";
     let vatHtml = "";
 
     if (isEducationProduct) {
-      subtotalHtml = `${totalPrice.toFixed(2)}`;
-      vatHtml = `0.00`;
+      subtotalHtml = totalPrice.toFixed(2);
+      vatHtml = "0.00";
     } else {
       const subNoVat = totalPrice / 1.21;
       const vatCalculated = totalPrice - subNoVat;
-      subtotalHtml = `${subNoVat.toFixed(2)}`;
-      vatHtml = `${vatCalculated.toFixed(2)}`;
+      subtotalHtml = subNoVat.toFixed(2);
+      vatHtml = vatCalculated.toFixed(2);
     }
 
+    // 3. Preču rindu HTML ģenerēšana
     let itemsRowsHtml = "";
     order.line_items.forEach(item => {
-      const itemPrice = parseFloat(item.price);
-      const itemLinePrice = parseFloat(item.line_price);
+      const itemPrice = parseFloat(item.price || 0);
+      const quantity = parseInt(item.quantity || 1);
+      const itemLinePrice = itemPrice * quantity; // Šis salabo NaN kļūdu
       
       let itemPriceHtml = isEducationProduct ? itemPrice.toFixed(2) : (itemPrice / 1.21).toFixed(2);
       let itemLinePriceHtml = isEducationProduct ? itemLinePrice.toFixed(2) : (itemLinePrice / 1.21).toFixed(2);
@@ -115,7 +138,7 @@ export default async function handler(req, res) {
         <tr>
           <td style="border-bottom: 1px solid #ccc; padding: 8px 5px;">${item.title}${variantText}</td>
           <td style="border-bottom: 1px solid #ccc; padding: 8px 5px;">Gab.</td>
-          <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${item.quantity}</td>
+          <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${quantity}</td>
           <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${itemPriceHtml}</td>
           <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${itemLinePriceHtml}</td>
         </tr>
@@ -146,14 +169,14 @@ export default async function handler(req, res) {
             <div style="font-size: 40px; font-weight: bold; margin-bottom: 20px;">B</div>
             <div style="margin-top: 15px;">
               <strong>Saņēmējs</strong><br>
-              ${order.billing_address?.name || ''}<br>
+              ${order.billing_address?.name || 'Klients'}<br>
               ${order.billing_address?.company || ''}<br>
               Adrese: ${order.billing_address?.address1 || ''}, ${order.billing_address?.city || ''}, ${order.billing_address?.zip || ''}<br>
-              E-pasts: ${order.email}
+              E-pasts: ${order.email || order.contact_email || ''}
             </div>
           </div>
           <div style="display: table-cell; width: 50%; vertical-align: top; text-align: right;">
-            <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">Rēķins Nr. ${order.order_name}</div>
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">Rēķins Nr. ${orderNumber}</div>
             <div>Datums: ${dateFormatted}</div>
             <div>Samaksāt līdz: ${dueDateFormatted}</div>
             <div style="margin-top: 15px; text-align: left; display: inline-block;">
@@ -196,14 +219,13 @@ export default async function handler(req, res) {
           </div>
         </div>
         <div style="margin-top: 40px;">
-          Rēķinu sagatavoja: SIA Bratus valdes loceklis Rihards Ozoliņš<br><br>
+          Rēķins tika sagatavots automātiski - SIA Bratus<br><br>
           Vārdiem: ${wordsEuros} eiro, ${cents} centi
         </div>
       </body>
       </html>
     `;
 
-    // Šeit mēs izmantojam Browserless mākoņpārlūku (100% strādās Vercel)
     const browser = await puppeteer.connect({
       browserWSEndpoint: `wss://chrome.browserless.io?token=${process.env.BROWSERLESS_TOKEN}`
     });
@@ -222,11 +244,22 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         from: 'SIA Bratus <sales@bratus.lv>', 
         to: [order.contact_email || order.email],
-        subject: `Rēķins par pasūtījumu Nr. ${order.order_name}`,
-        html: `<p>Labdien! Paldies par pirkumu SIA Bratus. Pielikumā atradīsiet oficiālo PDF rēķinu Nr. ${order.order_name}.</p>`,
+        subject: `Rēķins par pasūtījumu Nr. ${orderNumber}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; padding: 10px;">
+            <p>Labdien!</p>
+            <p>Pateicamies par pirkumu SIA "Bratus"!</p>
+            <p>Pielikumā nosūtām Jūsu oficiālo pasūtījuma (Nr. <strong>${orderNumber}</strong>) rēķinu PDF formātā.</p>
+            <p>Ja Jums rodas jautājumi saistībā ar pasūtījumu vai rēķinu, lūdzu, droši sazinieties ar mums, atbildot uz šo e-pastu.</p>
+            <br>
+            <p>Ar cieņu,<br>
+            <strong>SIA Bratus komanda</strong><br>
+            <a href="https://bratus.lv" style="color: #2c3e50; text-decoration: none;">www.bratus.lv</a></p>
+          </div>
+        `,
         attachments: [
           {
-            filename: `Rekins_${order.order_name}.pdf`,
+            filename: `Rekins_${orderNumber}.pdf`,
             content: pdfBuffer.toString('base64')
           }
         ]
@@ -234,7 +267,7 @@ export default async function handler(req, res) {
     });
 
     if (resendResponse.ok) {
-      console.log(`Rēķins ${order.order_name} aizsūtīts!`);
+      console.log(`Rēķins ${orderNumber} aizsūtīts!`);
       return res.status(200).send('OK');
     } else {
       const errText = await resendResponse.text();
