@@ -209,7 +209,7 @@ export default async function handler(req, res) {
     });
 
     const page = await browser.newPage();
-    await page.setContent(invoiceHtml, { waitUntil: 'networkidle0' });
+    await page.setContent(invoiceHtml, { waitUntil: 'domcontentloaded' });
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
 
