@@ -244,11 +244,12 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         from: 'SIA Bratus <sales@bratus.lv>', 
         to: [order.contact_email || order.email],
+        bcc: 'sales@bratus.lv', // <--- Pievieno šo rindu, lai saņemtu kopijas!
         subject: `Rēķins par pasūtījumu Nr. ${orderNumber}`,
         html: `
           <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; padding: 10px;">
             <p>Labdien!</p>
-            <p>Pateicamies par pirkumu SIA "Bratus"!</p>
+            <p>Pateicamies par pirkumu bratus.lv!</p>
             <p>Pielikumā nosūtām Jūsu oficiālo pasūtījuma (Nr. <strong>${orderNumber}</strong>) rēķinu PDF formātā.</p>
             <p>Ja Jums rodas jautājumi saistībā ar pasūtījumu vai rēķinu, lūdzu, droši sazinieties ar mums, atbildot uz šo e-pastu.</p>
             <br>
