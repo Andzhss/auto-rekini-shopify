@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
 
 export const config = {
   api: {
@@ -16,7 +15,7 @@ async function getRawBody(readable) {
   return Buffer.concat(chunks);
 }
 
-// Funkcija, kas pārvērš eiro summu vārdos latviski (Loģika līdz 999 999 €)
+// Funkcija, kas pārvērš eiro summu vārdos latviski
 function euroToWords(totalPriceCents) {
   const euros = Math.floor(totalPriceCents / 100);
   if (euros === 0) return "nulle";
@@ -79,7 +78,6 @@ export default async function handler(req, res) {
 
     const order = JSON.parse(bodyString);
     
-    // Pārbaudām preces tipu rēķina specifikācijai
     let isEducationProduct = false;
     order.line_items.forEach(item => {
       if (item.handle === 'vienreizeja-nodarbibu-samaksa-tehnologiju-nodarbibas-bratus' || item.handle === 'vasaras-nometne-2026') {
@@ -87,7 +85,6 @@ export default async function handler(req, res) {
       }
     });
 
-    // Kalkulācijas cenām ar/bez PVN
     const totalPrice = parseFloat(order.total_price);
     const cents = order.total_price_set.shop_money.amount.split('.')[1] || "00";
     const wordsEuros = euroToWords(Math.round(totalPrice * 100));
@@ -105,7 +102,6 @@ export default async function handler(req, res) {
       vatHtml = `${vatCalculated.toFixed(2)}`;
     }
 
-    // Ģenerējam preču rindas HTML formātā
     let itemsRowsHtml = "";
     order.line_items.forEach(item => {
       const itemPrice = parseFloat(item.price);
@@ -126,7 +122,6 @@ export default async function handler(req, res) {
       `;
     });
 
-    // Likumdošanas piezīme, ja izglītības produkts
     let legalNotesHtml = isEducationProduct ? `
       <div style="font-size: 12px; margin: 20px 0; line-height: 1.4;">
         Bērnu un jauniešu interešu izglītības iestāde "Bratus" tehnoloģiju akadēmija<br>
@@ -142,7 +137,6 @@ export default async function handler(req, res) {
     const dateFormatted = new Date(order.created_at).toLocaleDateString('lv-LV');
     const dueDateFormatted = new Date(new Date(order.created_at).getTime() + 3*24*60*60*1000).toLocaleDateString('lv-LV');
 
-    // PILNS FINĀLA HTML DIZAINS
     const invoiceHtml = `
       <html>
       <head><meta charset="utf-8"></head>
@@ -176,9 +170,7 @@ export default async function handler(req, res) {
             </div>
           </div>
         </div>
-
         ${legalNotesHtml}
-
         <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
           <thead>
             <tr>
@@ -193,7 +185,6 @@ export default async function handler(req, res) {
             ${itemsRowsHtml}
           </tbody>
         </table>
-
         <div style="width: 100%; display: table; margin-top: 20px;">
           <div style="display: table-cell; width: 60%;"></div>
           <div style="display: table-cell; width: 40%;">
@@ -204,7 +195,6 @@ export default async function handler(req, res) {
             </table>
           </div>
         </div>
-
         <div style="margin-top: 40px;">
           Rēķinu sagatavoja: SIA Bratus valdes loceklis Rihards Ozoliņš<br><br>
           Vārdiem: ${wordsEuros} eiro, ${cents} centi
@@ -213,14 +203,9 @@ export default async function handler(req, res) {
       </html>
     `;
 
-    // 4. PDF GENERATION
-    const executablePath = await chromium.executablePath();
-    const browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: executablePath,
-      headless: chromium.headless,
-      ignoreHTTPSErrors: true,
+    // Šeit mēs izmantojam Browserless mākoņpārlūku (100% strādās Vercel)
+    const browser = await puppeteer.connect({
+      browserWSEndpoint: `wss://chrome.browserless.io?token=${process.env.BROWSERLESS_TOKEN}`
     });
 
     const page = await browser.newPage();
@@ -228,7 +213,6 @@ export default async function handler(req, res) {
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
 
-    // 5. SENDING VIA RESEND API
     const resendResponse = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -236,7 +220,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: 'SIA Bratus <invoices@resend.dev>', // Sākumā izmantojam bezmaksas Resend domēnu testam
+        from: 'SIA Bratus <sales@bratus.lv>', 
         to: [order.contact_email || order.email],
         subject: `Rēķins par pasūtījumu Nr. ${order.order_name}`,
         html: `<p>Labdien! Paldies par pirkumu SIA Bratus. Pielikumā atradīsiet oficiālo PDF rēķinu Nr. ${order.order_name}.</p>`,
@@ -259,7 +243,7 @@ export default async function handler(req, res) {
     }
 
   } catch (error) {
-    console.error('Servera fatāla kļūda:', error);
+    console.error('Servera kļūda:', error);
     return res.status(500).send('Internal Server Error');
   }
 }
