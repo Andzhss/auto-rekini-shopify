@@ -186,7 +186,7 @@ export default async function handler(req, res) {
               Dārzenieku iela 42, LV-2123<br>
               Reģ. Nr.: 40203628316<br>
               PVN Nr.: LV40203628316<br>
-              Tālrunis: +371 26484249<br>
+              Tālrunis: +371 24424434<br>
               AS Swedbank<br>
               SWIFT/BIC: HABALV22<br>
               Bankas konta numurs: LV64HABA0551060367591
