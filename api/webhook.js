@@ -15,6 +15,28 @@ async function getRawBody(readable) {
   return Buffer.concat(chunks);
 }
 
+// Izglītības produktu product_id saraksts (Shopify webhook satur product_id, bet ne handle)
+// Pievieno šeit visus izglītības produktu ID
+const EDUCATION_PRODUCT_IDS = [
+  '8998', // <-- AIZSTĀJ ar īsto vasaras-nometne-2026 product_id no Shopify Admin
+];
+
+// Rezerves pārbaude pēc nosaukuma (ja product_id nav sarakstā)
+function isTitleEducation(title) {
+  const t = (title || '').toLowerCase();
+  return (
+    t.includes('vasaras nometne') ||
+    t.includes('vasaras nometņu') ||
+    t.includes('nometne') ||
+    t.includes('tehnoloģiju nodarbības') ||
+    t.includes('tehnologiju nodarbibas') ||
+    t.includes('vienreizēja') ||
+    t.includes('vienreizeja') ||
+    t.includes('interešu izglītība') ||
+    t.includes('interešu izgliitiba')
+  );
+}
+
 // Funkcija, kas pārvērš eiro summu vārdos latviski
 function euroToWords(totalPriceCents) {
   const euros = Math.floor(totalPriceCents / 100);
@@ -27,12 +49,12 @@ function euroToWords(totalPriceCents) {
   if (thou > 0) {
     const t_h = Math.floor(thou / 100);
     const t_rem_h = thou % 100;
-    
+
     const simti = ["", "viens simts ", "divi simti ", "trīs simti ", "četri simti ", "pieci simti ", "seši simti ", "septiņi simti ", "astoņi simti ", "deviņi simti "];
     words += simti[t_h];
 
     if (t_rem_h >= 11 && t_rem_h <= 19) {
-      const padsmiti = {11:"vienpadsmit ", 12:"divpadsmit ", 13:"trīspadsmit ", 14:"četrpadsmit ", 15:"piecpadsmit ", 16:"sešpadsmit ", 17:"septiņpadsmit ", 18:"astoņpadsmit ", 19:"deviņpadsmit "};
+      const padsmiti = { 11: "vienpadsmit ", 12: "divpadsmit ", 13: "trīspadsmit ", 14: "četrpadsmit ", 15: "piecpadsmit ", 16: "sešpadsmit ", 17: "septiņpadsmit ", 18: "astoņpadsmit ", 19: "deviņpadsmit " };
       words += padsmiti[t_rem_h];
     } else {
       const desmiti = ["", "desmit ", "divdesmit ", "trīsdesmit ", "četrdesmit ", "piecdesmit ", "sešdesmit ", "septiņdesmit ", "astoņdesmit ", "deviņdesmit "];
@@ -48,7 +70,7 @@ function euroToWords(totalPriceCents) {
   words += simti_r[r_h];
 
   if (r_rem_h >= 11 && r_rem_h <= 19) {
-    const padsmiti_r = {11:"vienpadsmit ", 12:"divpadsmit ", 13:"trīspadsmit ", 14:"četrpadsmit ", 15:"piecpadsmit ", 16:"sešpadsmit ", 17:"septiņpadsmit ", 18:"astoņpadsmit ", 19:"deviņpadsmit "};
+    const padsmiti_r = { 11: "vienpadsmit ", 12: "divpadsmit ", 13: "trīspadsmit ", 14: "četrpadsmit ", 15: "piecpadsmit ", 16: "sešpadsmit ", 17: "septiņpadsmit ", 18: "astoņpadsmit ", 19: "deviņpadsmit " };
     words += padsmiti_r[r_rem_h];
   } else {
     const desmiti_r = ["", "desmit ", "divdesmit ", "trīsdesmit ", "četrdesmit ", "piecdesmit ", "sešdesmit ", "septiņdesmit ", "astoņdesmit ", "deviņdesmit "];
@@ -77,36 +99,38 @@ export default async function handler(req, res) {
     }
 
     const order = JSON.parse(bodyString);
-    
-    // Rēķina numura labojums
+
+    // Rēķina numurs
     const orderNumber = order.name || order.order_number || "TEST";
 
-    // 1. Gudrāka izglītības produktu (bez PVN) pārbaude
+    // --- IZGLĪTĪBAS PRODUKTA PĀRBAUDE ---
+    // Shopify webhook line_items NESATUR handle lauku!
+    // Tāpēc pārbaudām pēc product_id (visuzticamākais) UN pēc nosaukuma (rezerves)
     let isEducationProduct = false;
     let calculatedTotal = 0;
 
     order.line_items.forEach(item => {
-      const title = (item.title || item.name || '').toLowerCase();
-      const handle = (item.handle || '').toLowerCase();
-      
-      // Pārbaudām nosaukumus un kodus, lai garantētu PVN noņemšanu
-      if (
-        handle.includes('vienreizeja') || 
-        handle.includes('vasaras-nometne') ||
-        title.includes('tehnoloģiju nodarbības') ||
-        title.includes('tehnologiju nodarbibas') ||
-        title.includes('vasaras nometne') ||
-        title.includes('vienreizēja')
-      ) {
+      const productId = String(item.product_id || '');
+
+      // 1. Pārbaude pēc product_id (visuzticamākā metode)
+      const matchesById = EDUCATION_PRODUCT_IDS.some(id => productId.includes(id));
+
+      // 2. Rezerves pārbaude pēc nosaukuma
+      const matchesByTitle = isTitleEducation(item.title || item.name || '');
+
+      if (matchesById || matchesByTitle) {
         isEducationProduct = true;
+        console.log(`Izglītības produkts atpazīts: "${item.title}" (product_id: ${productId})`);
       }
-      
-      // Paši saskaitām summas, ja Shopify testa webhook atstāj nulles
+
       calculatedTotal += parseFloat(item.price || 0) * parseInt(item.quantity || 1);
     });
 
-    // 2. Kopējo summu un PVN kalkulācija
-    const totalPrice = (order.total_price && parseFloat(order.total_price) > 0) ? parseFloat(order.total_price) : calculatedTotal;
+    // Kopējo summu un PVN kalkulācija
+    const totalPrice = (order.total_price && parseFloat(order.total_price) > 0)
+      ? parseFloat(order.total_price)
+      : calculatedTotal;
+
     const cents = Math.round((totalPrice % 1) * 100).toString().padStart(2, '0');
     const wordsEuros = euroToWords(Math.round(totalPrice * 100));
 
@@ -123,24 +147,26 @@ export default async function handler(req, res) {
       vatHtml = vatCalculated.toFixed(2);
     }
 
-    // 3. Preču rindu HTML ģenerēšana
+    // Preču rindu HTML ģenerēšana
     let itemsRowsHtml = "";
     order.line_items.forEach(item => {
       const itemPrice = parseFloat(item.price || 0);
       const quantity = parseInt(item.quantity || 1);
-      const itemLinePrice = itemPrice * quantity; // Šis salabo NaN kļūdu
-      
+      const itemLinePrice = itemPrice * quantity;
+
       let itemPriceHtml = isEducationProduct ? itemPrice.toFixed(2) : (itemPrice / 1.21).toFixed(2);
       let itemLinePriceHtml = isEducationProduct ? itemLinePrice.toFixed(2) : (itemLinePrice / 1.21).toFixed(2);
-      let variantText = (item.variant_title && item.variant_title !== 'Default Title') ? `<br><span style="font-size: 12px; color: #555;">${item.variant_title}</span>` : "";
+      let variantText = (item.variant_title && item.variant_title !== 'Default Title')
+        ? `<br><span style="font-size: 12px; color: #555;">${item.variant_title}</span>`
+        : "";
 
       itemsRowsHtml += `
         <tr>
           <td style="border-bottom: 1px solid #ccc; padding: 8px 5px;">${item.title}${variantText}</td>
           <td style="border-bottom: 1px solid #ccc; padding: 8px 5px;">Gab.</td>
-          <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${quantity}</td>
-          <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${itemPriceHtml}</td>
-          <td class="right" style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${itemLinePriceHtml}</td>
+          <td style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${quantity}</td>
+          <td style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${itemPriceHtml}</td>
+          <td style="border-bottom: 1px solid #ccc; padding: 8px 5px; text-align: right;">${itemLinePriceHtml}</td>
         </tr>
       `;
     });
@@ -158,7 +184,7 @@ export default async function handler(req, res) {
     ` : "";
 
     const dateFormatted = new Date(order.created_at).toLocaleDateString('lv-LV');
-    const dueDateFormatted = new Date(new Date(order.created_at).getTime() + 3*24*60*60*1000).toLocaleDateString('lv-LV');
+    const dueDateFormatted = new Date(new Date(order.created_at).getTime() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString('lv-LV');
 
     const invoiceHtml = `
       <html>
@@ -197,11 +223,11 @@ export default async function handler(req, res) {
         <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
           <thead>
             <tr>
-              <th style="border-bottom: 2px solid #000; text-align: left; padding: 8px 5px; font-weight: bold;">NOSAUKUMS</th>
-              <th style="border-bottom: 2px solid #000; text-align: left; padding: 8px 5px; font-weight: bold;">Mērvienība</th>
-              <th style="border-bottom: 2px solid #000; text-align: right; padding: 8px 5px; font-weight: bold;">DAUDZUMS</th>
-              <th style="border-bottom: 2px solid #000; text-align: right; padding: 8px 5px; font-weight: bold;">CENA (EUR)</th>
-              <th style="border-bottom: 2px solid #000; text-align: right; padding: 8px 5px; font-weight: bold;">KOPĀ (EUR)</th>
+              <th style="border-bottom: 2px solid #000; text-align: left; padding: 8px 5px;">NOSAUKUMS</th>
+              <th style="border-bottom: 2px solid #000; text-align: left; padding: 8px 5px;">Mērvienība</th>
+              <th style="border-bottom: 2px solid #000; text-align: right; padding: 8px 5px;">DAUDZUMS</th>
+              <th style="border-bottom: 2px solid #000; text-align: right; padding: 8px 5px;">CENA (EUR)</th>
+              <th style="border-bottom: 2px solid #000; text-align: right; padding: 8px 5px;">KOPĀ (EUR)</th>
             </tr>
           </thead>
           <tbody>
@@ -242,9 +268,9 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: 'SIA Bratus <sales@bratus.lv>', 
+        from: 'SIA Bratus <sales@bratus.lv>',
         to: [order.contact_email || order.email],
-        bcc: 'sales@bratus.lv', // <--- Pievieno šo rindu, lai saņemtu kopijas!
+        bcc: 'sales@bratus.lv',
         subject: `Rēķins par pasūtījumu Nr. ${orderNumber}`,
         html: `
           <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; padding: 10px;">
@@ -268,7 +294,7 @@ export default async function handler(req, res) {
     });
 
     if (resendResponse.ok) {
-      console.log(`Rēķins ${orderNumber} aizsūtīts!`);
+      console.log(`Rēķins ${orderNumber} aizsūtīts! Izglītības produkts: ${isEducationProduct}`);
       return res.status(200).send('OK');
     } else {
       const errText = await resendResponse.text();
